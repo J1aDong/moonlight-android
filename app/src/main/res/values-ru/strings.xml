@@ -242,6 +242,7 @@
     <string name="title_privacy_policy">Политика конфиденциальности</string>
     <string name="resolution_360p">360p</string>
     <string name="resolution_1080p">1080p</string>
+    <string name="resolution_1200p">1200p</string>
     <string name="resolution_1440p">1440p</string>
     <string name="summary_troubleshooting">Посмотрите советы по обнаружению и устранению проблем</string>
     <string name="category_help">Помощь</string>

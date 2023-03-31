@@ -233,6 +233,7 @@
     <string name="fps_90">90 FPS</string>
     <string name="fps_120">120 FPS</string>
     <string name="resolution_1080p">1080p</string>
+    <string name="resolution_1200p">1200p</string>
     <string name="resolution_720p">720p</string>
     <string name="pacing_balanced">平衡</string>
     <string name="pacing_smoothness">优先视频流畅度（可能会显著增大延迟）</string>

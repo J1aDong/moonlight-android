@@ -98,6 +98,7 @@
     <string name="summary_troubleshooting">Zobrazit tipy pro diagnózu a opravu běžných problémů se streamováním</string>
     <string name="resolution_720p">720p</string>
     <string name="resolution_1080p">1080p</string>
+    <string name="resolution_1200p">1200p</string>
     <string name="resolution_1440p">1440p</string>
     <string name="videoformat_hevcauto">Automaticky</string>
     <string name="audioconf_71surround">7.1 prostorový zvuk</string>

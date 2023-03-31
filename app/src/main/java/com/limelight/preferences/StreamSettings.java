@@ -444,6 +444,7 @@ public class StreamSettings extends Activity {
                             }
                         });
                     }
+
                     if (maxSupportedResW < 1920) {
                         // 1080p is unsupported
                         removeValue(PreferenceConfiguration.RESOLUTION_PREF_STRING, PreferenceConfiguration.RES_1080P, new Runnable() {

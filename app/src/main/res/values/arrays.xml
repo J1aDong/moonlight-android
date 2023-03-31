@@ -5,6 +5,7 @@
         <item>@string/resolution_480p</item>
         <item>@string/resolution_720p</item>
         <item>@string/resolution_1080p</item>
+        <item>@string/resolution_1200p</item>
         <item>@string/resolution_1440p</item>
         <item>@string/resolution_4k</item>
     </string-array>

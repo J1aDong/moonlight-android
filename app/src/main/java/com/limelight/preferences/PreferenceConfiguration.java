@@ -96,6 +96,7 @@ public class PreferenceConfiguration {
     public static final String RES_480P = "854x480";
     public static final String RES_720P = "1280x720";
     public static final String RES_1080P = "1920x1080";
+    public static final String RES_1200P = "1920x1200";
     public static final String RES_1440P = "2560x1440";
     public static final String RES_4K = "3840x2160";
     public static final String RES_NATIVE = "Native";
@@ -189,6 +190,8 @@ public class PreferenceConfiguration {
         }
         else if (resString.equalsIgnoreCase("1080p")) {
             return RES_1080P;
+        }else if (resString.equalsIgnoreCase("1200p")){
+            return RES_1200P;
         }
         else if (resString.equalsIgnoreCase("1440p")) {
             return RES_1440P;
@@ -221,6 +224,8 @@ public class PreferenceConfiguration {
                 return RES_720P;
             case 1080:
                 return RES_1080P;
+            case 1200:
+                return RES_1200P;
             case 1440:
                 return RES_1440P;
             case 2160:
@@ -412,6 +417,16 @@ public class PreferenceConfiguration {
             else if (str.equals("1080p60")) {
                 config.width = 1920;
                 config.height = 1080;
+                config.fps = 60;
+            }
+            else if (str.equals("1200p30")){
+                config.width = 1920;
+                config.height = 1200;
+                config.fps = 30;
+            }
+            else if (str.equals("1200p60")){
+                config.width = 1920;
+                config.height = 1200;
                 config.fps = 60;
             }
             else if (str.equals("4K30")) {

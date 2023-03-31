@@ -171,6 +171,7 @@
     <string name="audioconf_71surround">7.1 Sonido Envolvente</string>
     <string name="title_troubleshooting">Guía de Solución de Errores</string>
     <string name="resolution_1080p">1080p</string>
+    <string name="resolution_1200p">1200p</string>
     <string name="summary_frame_pacing">Especificar como balancear la latencia de video y la fluidez</string>
     <string name="pacing_balanced_alt">Equilibrado con limitador de FPS (Cuadros por Segundo)</string>
     <string name="audioconf_51surround">5.1 Sonido Envolvente</string>
