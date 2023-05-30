@@ -4,6 +4,7 @@ package com.limelight;
 import com.limelight.binding.PlatformBinding;
 import com.limelight.binding.audio.AndroidAudioRenderer;
 import com.limelight.binding.input.ControllerHandler;
+import com.limelight.binding.input.GameInputDevice;
 import com.limelight.binding.input.KeyboardTranslator;
 import com.limelight.binding.input.capture.InputCaptureManager;
 import com.limelight.binding.input.capture.InputCaptureProvider;
@@ -52,6 +53,9 @@ import android.content.res.Configuration;
 import android.graphics.Point;
 import android.graphics.Rect;
 import android.hardware.input.InputManager;
+import android.hardware.SensorEventListener;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
 import android.media.AudioManager;
 import android.net.ConnectivityManager;
 import android.net.wifi.WifiManager;
@@ -59,6 +63,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
+import android.util.Log;
 import android.util.Rational;
 import android.view.Display;
 import android.view.InputDevice;
@@ -77,6 +82,7 @@ import android.widget.FrameLayout;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.hardware.SensorManager;
 
 import java.io.ByteArrayInputStream;
 import java.lang.reflect.InvocationTargetException;
@@ -90,7 +96,10 @@ import java.util.Locale;
 public class Game extends Activity implements SurfaceHolder.Callback,
         OnGenericMotionListener, OnTouchListener, NvConnectionListener, EvdevListener,
         OnSystemUiVisibilityChangeListener, GameGestures, StreamView.InputCallbacks,
-        PerfOverlayListener, UsbDriverService.UsbDriverStateListener, View.OnKeyListener {
+        PerfOverlayListener, UsbDriverService.UsbDriverStateListener, View.OnKeyListener, SensorEventListener {
+
+    private static final String TAG = "Game";
+
     private int lastButtonState = 0;
 
     // Only 2 touches are supported
@@ -152,6 +161,11 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private WifiManager.WifiLock lowLatencyWifiLock;
 
     private boolean connectedToUsbDriverService = false;
+
+    private SensorManager sensorManager;
+    private Sensor gameRotationVectorSensor;
+    private float gyroSensitivity;
+
     private ServiceConnection usbDriverServiceConnection = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName componentName, IBinder iBinder) {
@@ -180,8 +194,32 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     public static final String EXTRA_SERVER_CERT = "ServerCert";
 
     @Override
+    public void onSensorChanged(SensorEvent event) {
+        LimeLog.warning("灵敏度--》"+gyroSensitivity);
+        if (gyroSensitivity == 0){
+            LimeLog.warning("灵敏度不开启");
+            return;
+        }
+
+        if (event.sensor.getType() == Sensor.TYPE_GYROSCOPE) {
+            float dx = event.values[0];
+            float dy = event.values[1];
+
+            short x = (short) (dx * -gyroSensitivity);
+            short y = (short) (dy * gyroSensitivity);
+            conn.sendMouseMove(x, y);
+        }
+    }
+
+    @Override
+    public void onAccuracyChanged(Sensor sensor, int accuracy) {
+    }
+
+    @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        this.sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
+        this.gameRotationVectorSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
 
         UiHelper.setLocale(this);
 
@@ -533,7 +571,10 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
         // The connection will be started when the surface gets created
         streamView.getHolder().addCallback(this);
+        gyroSensitivity = (float)prefConfig.gyroSensitivity;
+        sensorManager.registerListener(this, gameRotationVectorSensor, SensorManager.SENSOR_DELAY_GAME);
     }
+
 
     private void setPreferredOrientationForCurrentDisplay() {
         Display display = getWindowManager().getDefaultDisplay();
@@ -1083,6 +1124,10 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
         // Destroy the capture provider
         inputCaptureProvider.destroy();
+
+        if (sensorManager != null){
+            sensorManager.unregisterListener(this);
+        }
     }
 
     @Override
@@ -2295,6 +2340,11 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     }
 
     @Override
+    public void showGameMenu(GameInputDevice device) {
+        new GameMenu(this, conn, device);
+    }
+
+    @Override
     public boolean onKey(View view, int keyCode, KeyEvent keyEvent) {
         switch (keyEvent.getAction()) {
             case KeyEvent.ACTION_DOWN:
@@ -2306,5 +2356,21 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             default:
                 return false;
         }
+    }
+
+    public void disconnect() {
+        finish();
+    }
+
+    @Override
+    public void onBackPressed() {
+        // Instead of "closing" the game activity open the game menu. The user has to select
+        // "Disconnect" within the game menu to actually disconnect from the remote host.
+        //
+        // Use the onBackPressed instead of the onKey function, since the onKey function
+        // also captures events while having the on-screen keyboard open.  Using onBackPressed
+        // ensures that Android properly handles the back key when needed and only open the game
+        // menu when the activity would be closed.
+        showGameMenu(null);
     }
 }

@@ -263,4 +263,20 @@
     <string name="title_full_range">强制完全动态范围视频 (实验性)</string>
     <string name="pair_pairing_help">如果你的主机运行的是 Sunshine，那请前往Sunshine的网页界面输入PIN码。</string>
     <string name="pcview_menu_eol">NVIDIA GameStream 终止服务</string>
+
+    <string name="title_gyro_sensitivity">调整陀螺仪灵敏度</string>
+
+    <string name="game_menu_toggle_keyboard">切换屏幕键盘</string>
+    <string name="game_menu_toggle_mouse_on">启用控制器鼠标仿真</string>
+    <string name="game_menu_toggle_mouse_off">禁用控制器鼠标仿真</string>
+    <string name="game_menu_disconnect">断开</string>
+    <string name="game_menu_cancel">取消</string>
+    <string name="game_menu_send_keys">Send special Key(s)</string>
+    <string name="game_menu_send_keys_esc">Send ESC (Menu)</string>
+    <string name="game_menu_send_keys_f11">Send F11 (Toggle Full Screen)</string>
+    <string name="game_menu_send_keys_ctrl_v">Send CTRL + V (Paste Clipboard)</string>
+    <string name="game_menu_send_keys_win">Send WIN (Toggle Windows Start Menu)</string>
+    <string name="game_menu_send_keys_win_d">Send WIN + D (Switch to Desktop)</string>
+    <string name="game_menu_send_keys_win_g">Send WIN + G (Open Xbox Game Bar)</string>
+    <string name="game_menu_send_keys_shift_tab">Send SHIFT + TAB (Open Steam Overlay)</string>
 </resources>
