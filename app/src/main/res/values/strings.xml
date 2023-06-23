@@ -141,7 +141,7 @@
     <string name="game_menu_send_keys">Send special Key(s)</string>
     <string name="game_menu_send_keys_esc">Send ESC (Menu)</string>
     <string name="game_menu_send_keys_f11">Send F11 (Toggle Full Screen)</string>
-    <string name="game_menu_send_keys_ctrl_v">Send CTRL + V (Paste Clipboard)</string>
+    <string name="game_menu_send_keys_ctrl_alt_del">Send CTRL + Alt + Delete (Open Taskmgr)</string>
     <string name="game_menu_send_keys_win">Send WIN (Toggle Windows Start Menu)</string>
     <string name="game_menu_send_keys_win_d">Send WIN + D (Switch to Desktop)</string>
     <string name="game_menu_send_keys_win_g">Send WIN + G (Open Xbox Game Bar)</string>
@@ -269,7 +269,6 @@
     <string name="resolution_480p">480p</string>
     <string name="resolution_720p">720p</string>
     <string name="resolution_1080p">1080p</string>
-    <string name="resolution_1200p">1200p</string>
     <string name="resolution_1440p">1440p</string>
     <string name="resolution_4k">4K</string>
 

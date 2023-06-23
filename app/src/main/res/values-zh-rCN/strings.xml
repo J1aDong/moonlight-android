@@ -233,7 +233,6 @@
     <string name="fps_90">90 FPS</string>
     <string name="fps_120">120 FPS</string>
     <string name="resolution_1080p">1080p</string>
-    <string name="resolution_1200p">1200p</string>
     <string name="resolution_720p">720p</string>
     <string name="pacing_balanced">平衡</string>
     <string name="pacing_smoothness">优先视频流畅度（可能会显著增大延迟）</string>
@@ -274,7 +273,7 @@
     <string name="game_menu_send_keys">发送特殊按键(s)</string>
     <string name="game_menu_send_keys_esc">发送 ESC (Menu)</string>
     <string name="game_menu_send_keys_f11">发送 F11 (切换全屏)</string>
-    <string name="game_menu_send_keys_ctrl_v">发送 复制 (Paste Clipboard)</string>
+    <string name="game_menu_send_keys_ctrl_alt_del">发送 CTRL + Alt + Delete (打开任务管理器)</string>
     <string name="game_menu_send_keys_win">发送 WIN (切换 Windows Start Menu)</string>
     <string name="game_menu_send_keys_win_d">发送 WIN + D (切换到 桌面)</string>
     <string name="game_menu_send_keys_win_g">发送 WIN + G (打开 Xbox Game Bar)</string>

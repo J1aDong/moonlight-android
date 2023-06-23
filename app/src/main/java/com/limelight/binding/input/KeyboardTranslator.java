@@ -63,6 +63,7 @@ public class KeyboardTranslator implements InputManager.InputDeviceListener {
     public static final int VK_LSHIFT = 160;
     public static final int VK_LCONTROL = 162;
 
+
     private static class KeyboardMapping {
         private final InputDevice device;
         private final int[] deviceKeyCodeToQwertyKeyCode;
