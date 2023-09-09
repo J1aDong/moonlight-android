@@ -3,7 +3,16 @@ package com.limelight.binding.input;
 import android.annotation.TargetApi;
 import android.app.Activity;
 import android.content.Context;
+import android.hardware.BatteryState;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
 import android.hardware.input.InputManager;
+import android.hardware.lights.Light;
+import android.hardware.lights.LightState;
+import android.hardware.lights.LightsManager;
+import android.hardware.lights.LightsRequest;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.media.AudioAttributes;
@@ -31,15 +40,19 @@ import com.limelight.binding.input.driver.UsbDriverService;
 import com.limelight.nvstream.NvConnection;
 import com.limelight.nvstream.input.ControllerPacket;
 import com.limelight.nvstream.input.MouseButtonPacket;
+import com.limelight.nvstream.jni.MoonBridge;
 import com.limelight.preferences.PreferenceConfiguration;
 import com.limelight.ui.GameGestures;
 import com.limelight.utils.Vector2d;
 
+import org.cgutman.shieldcontrollerextensions.SceChargingState;
+import org.cgutman.shieldcontrollerextensions.SceConnectionType;
 import org.cgutman.shieldcontrollerextensions.SceManager;
 
 import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 public class ControllerHandler implements InputManager.InputDeviceListener, UsbDriverListener {
 
@@ -51,6 +64,45 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
     private static final int EMULATING_SPECIAL = 0x1;
     private static final int EMULATING_SELECT = 0x2;
+
+    private static final short MAX_GAMEPADS = 16; // Limited by bits in activeGamepadMask
+
+    private static final int BATTERY_RECHECK_INTERVAL_MS = 120 * 1000;
+
+    private static final Map<Integer, Integer> ANDROID_TO_LI_BUTTON_MAP = Map.ofEntries(
+            Map.entry(KeyEvent.KEYCODE_BUTTON_A, ControllerPacket.A_FLAG),
+            Map.entry(KeyEvent.KEYCODE_BUTTON_B, ControllerPacket.B_FLAG),
+            Map.entry(KeyEvent.KEYCODE_BUTTON_X, ControllerPacket.X_FLAG),
+            Map.entry(KeyEvent.KEYCODE_BUTTON_Y, ControllerPacket.Y_FLAG),
+            Map.entry(KeyEvent.KEYCODE_DPAD_UP, ControllerPacket.UP_FLAG),
+            Map.entry(KeyEvent.KEYCODE_DPAD_DOWN, ControllerPacket.DOWN_FLAG),
+            Map.entry(KeyEvent.KEYCODE_DPAD_LEFT, ControllerPacket.LEFT_FLAG),
+            Map.entry(KeyEvent.KEYCODE_DPAD_RIGHT, ControllerPacket.RIGHT_FLAG),
+            Map.entry(KeyEvent.KEYCODE_DPAD_UP_LEFT, ControllerPacket.UP_FLAG | ControllerPacket.LEFT_FLAG),
+            Map.entry(KeyEvent.KEYCODE_DPAD_UP_RIGHT, ControllerPacket.UP_FLAG | ControllerPacket.RIGHT_FLAG),
+            Map.entry(KeyEvent.KEYCODE_DPAD_DOWN_LEFT, ControllerPacket.DOWN_FLAG | ControllerPacket.LEFT_FLAG),
+            Map.entry(KeyEvent.KEYCODE_DPAD_DOWN_RIGHT, ControllerPacket.DOWN_FLAG | ControllerPacket.RIGHT_FLAG),
+            Map.entry(KeyEvent.KEYCODE_BUTTON_L1, ControllerPacket.LB_FLAG),
+            Map.entry(KeyEvent.KEYCODE_BUTTON_R1, ControllerPacket.RB_FLAG),
+            Map.entry(KeyEvent.KEYCODE_BUTTON_THUMBL, ControllerPacket.LS_CLK_FLAG),
+            Map.entry(KeyEvent.KEYCODE_BUTTON_THUMBR, ControllerPacket.RS_CLK_FLAG),
+            Map.entry(KeyEvent.KEYCODE_BUTTON_START, ControllerPacket.PLAY_FLAG),
+            Map.entry(KeyEvent.KEYCODE_MENU, ControllerPacket.PLAY_FLAG),
+            Map.entry(KeyEvent.KEYCODE_BUTTON_SELECT, ControllerPacket.BACK_FLAG),
+            Map.entry(KeyEvent.KEYCODE_BACK, ControllerPacket.BACK_FLAG),
+            Map.entry(KeyEvent.KEYCODE_BUTTON_MODE, ControllerPacket.SPECIAL_BUTTON_FLAG),
+
+            // This is the Xbox Series X Share button
+            Map.entry(KeyEvent.KEYCODE_MEDIA_RECORD, ControllerPacket.MISC_FLAG),
+
+            // This is a weird one, but it's what Android does prior to 4.10 kernels
+            // where DualShock/DualSense touchpads weren't mapped as separate devices.
+            // https://android.googlesource.com/platform/frameworks/base/+/master/data/keyboards/Vendor_054c_Product_0ce6_fallback.kl
+            // https://android.googlesource.com/platform/frameworks/base/+/master/data/keyboards/Vendor_054c_Product_09cc.kl
+            Map.entry(KeyEvent.KEYCODE_BUTTON_1, ControllerPacket.TOUCHPAD_FLAG)
+
+            // FIXME: Paddles?
+    );
 
     private final Vector2d inputVector = new Vector2d();
 
@@ -182,18 +234,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
         LimeLog.info("Device changed: "+existingContext.name+" ("+deviceId+")");
 
-        // Don't release the controller number, because we will carry it over if it is present.
-        // We also want to make sure the change is invisible to the host PC to avoid an add/remove
-        // cycle for the gamepad which may break some games.
-        existingContext.destroy();
-
+        // Migrate the existing context into this new one by moving any stateful elements
         InputDeviceContext newContext = createInputDeviceContextForDevice(device);
-
-        // Copy over existing controller number state
-        newContext.assignedControllerNumber = existingContext.assignedControllerNumber;
-        newContext.reservedControllerNumber = existingContext.reservedControllerNumber;
-        newContext.controllerNumber = existingContext.controllerNumber;
-
+        newContext.migrateContext(existingContext);
         inputDeviceContexts.put(deviceId, newContext);
     }
 
@@ -210,6 +253,20 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
         sceManager.stop();
         deviceVibrator.cancel();
+    }
+
+    public void disableSensors() {
+        for (int i = 0; i < inputDeviceContexts.size(); i++) {
+            InputDeviceContext deviceContext = inputDeviceContexts.valueAt(i);
+            deviceContext.disableSensors();
+        }
+    }
+
+    public void enableSensors() {
+        for (int i = 0; i < inputDeviceContexts.size(); i++) {
+            InputDeviceContext deviceContext = inputDeviceContexts.valueAt(i);
+            deviceContext.enableSensors();
+        }
     }
 
     private static boolean hasJoystickAxes(InputDevice device) {
@@ -337,7 +394,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 context.controllerNumber = 0;
 
                 LimeLog.info("Reserving the next available controller number");
-                for (short i = 0; i < 4; i++) {
+                for (short i = 0; i < MAX_GAMEPADS; i++) {
                     if ((currentControllers & (1 << i)) == 0) {
                         // Found an unused controller value
                         currentControllers |= (1 << i);
@@ -361,7 +418,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 context.controllerNumber = 0;
 
                 LimeLog.info("Reserving the next available controller number");
-                for (short i = 0; i < 4; i++) {
+                for (short i = 0; i < MAX_GAMEPADS; i++) {
                     if ((currentControllers & (1 << i)) == 0) {
                         // Found an unused controller value
                         currentControllers |= (1 << i);
@@ -383,6 +440,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
         LimeLog.info("Assigned as controller "+context.controllerNumber);
         context.assignedControllerNumber = true;
+
+        // Report attributes of this new controller to the host
+        context.sendControllerArrival();
     }
 
     private UsbDeviceContext createUsbDeviceContextForDevice(AbstractController device) {
@@ -400,6 +460,32 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         context.triggerDeadzone = 0.13f;
 
         return context;
+    }
+
+    private static boolean hasButtonUnderTouchpad(InputDevice dev, byte type) {
+        // It has to have a touchpad to have a button under it
+        if ((dev.getSources() & InputDevice.SOURCE_TOUCHPAD) != InputDevice.SOURCE_TOUCHPAD) {
+            return false;
+        }
+
+        // Landroid/view/InputDevice;->hasButtonUnderPad()Z is blocked after O
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.O) {
+            try {
+                return (Boolean) dev.getClass().getMethod("hasButtonUnderPad").invoke(dev);
+            } catch (NoSuchMethodException e) {
+                e.printStackTrace();
+            } catch (IllegalAccessException e) {
+                e.printStackTrace();
+            } catch (InvocationTargetException e) {
+                e.printStackTrace();
+            } catch (ClassCastException e) {
+                e.printStackTrace();
+            }
+        }
+
+        // We can't use the platform API, so we'll have to just guess based on the gamepad type.
+        // If this is a PlayStation controller with a touchpad, we know it has a clickpad.
+        return type == MoonBridge.LI_CTYPE_PS;
     }
 
     private static boolean isExternal(InputDevice dev) {
@@ -522,10 +608,20 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
             context.vendorId = dev.getVendorId();
             context.productId = dev.getProductId();
+
+            // These aren't always present in the Android key layout files, so they won't show up
+            // in our normal InputDevice.hasKeys() probing.
+            context.hasPaddles = MoonBridge.guessControllerHasPaddles(context.vendorId, context.productId);
+            context.hasShare = MoonBridge.guessControllerHasShareButton(context.vendorId, context.productId);
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && hasDualAmplitudeControlledRumbleVibrators(dev.getVibratorManager())) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && hasQuadAmplitudeControlledRumbleVibrators(dev.getVibratorManager())) {
             context.vibratorManager = dev.getVibratorManager();
+            context.quadVibrators = true;
+        }
+        else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && hasDualAmplitudeControlledRumbleVibrators(dev.getVibratorManager())) {
+            context.vibratorManager = dev.getVibratorManager();
+            context.quadVibrators = false;
         }
         else if (dev.getVibrator().hasVibrator()) {
             context.vibrator = dev.getVibrator();
@@ -538,6 +634,10 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             context.hasMode = buttons[0];
             context.hasSelect = buttons[1] || buttons[2];
         }
+
+        context.touchpadXRange = dev.getMotionRange(MotionEvent.AXIS_X, InputDevice.SOURCE_TOUCHPAD);
+        context.touchpadYRange = dev.getMotionRange(MotionEvent.AXIS_Y, InputDevice.SOURCE_TOUCHPAD);
+        context.touchpadPressureRange = dev.getMotionRange(MotionEvent.AXIS_PRESSURE, InputDevice.SOURCE_TOUCHPAD);
 
         context.leftStickXAxis = MotionEvent.AXIS_X;
         context.leftStickYAxis = MotionEvent.AXIS_Y;
@@ -816,12 +916,131 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         }
     }
 
+    private static boolean areBatteryCapacitiesEqual(float first, float second) {
+        // With no NaNs involved, it is a simple equality comparison.
+        if (!Float.isNaN(first) && !Float.isNaN(second)) {
+            return first == second;
+        }
+        else {
+            // If we have a NaN in one or both positions, compare NaN-ness instead.
+            // Equality comparisons will always return false for NaN.
+            return Float.isNaN(first) == Float.isNaN(second);
+        }
+    }
+
+    private void sendControllerBatteryPacket(InputDeviceContext context) {
+        int currentBatteryStatus;
+        float currentBatteryCapacity;
+
+        // Use the BatteryState object introduced in Android S, if it's available and present.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && context.inputDevice.getBatteryState().isPresent()) {
+            currentBatteryStatus = context.inputDevice.getBatteryState().getStatus();
+            currentBatteryCapacity = context.inputDevice.getBatteryState().getCapacity();
+        }
+        else if (sceManager.isRecognizedDevice(context.inputDevice)) {
+            // On the SHIELD Android TV, we can use a proprietary API to access battery/charge state.
+            // We will convert it to the same form used by BatteryState to share code.
+            int batteryPercentage = sceManager.getBatteryPercentage(context.inputDevice);
+            if (batteryPercentage < 0) {
+                currentBatteryCapacity = Float.NaN;
+            }
+            else {
+                currentBatteryCapacity = batteryPercentage / 100.f;
+            }
+
+            SceConnectionType connectionType = sceManager.getConnectionType(context.inputDevice);
+            SceChargingState chargingState = sceManager.getChargingState(context.inputDevice);
+
+            // We can make some assumptions about charge state based on the connection type
+            if (connectionType == SceConnectionType.WIRED || connectionType == SceConnectionType.BOTH) {
+                if (batteryPercentage == 100) {
+                    currentBatteryStatus = BatteryState.STATUS_FULL;
+                }
+                else if (chargingState == SceChargingState.NOT_CHARGING) {
+                    currentBatteryStatus = BatteryState.STATUS_NOT_CHARGING;
+                }
+                else {
+                    currentBatteryStatus = BatteryState.STATUS_CHARGING;
+                }
+            }
+            else if (connectionType == SceConnectionType.WIRELESS) {
+                if (chargingState == SceChargingState.CHARGING) {
+                    currentBatteryStatus = BatteryState.STATUS_CHARGING;
+                }
+                else {
+                    currentBatteryStatus = BatteryState.STATUS_DISCHARGING;
+                }
+            }
+            else {
+                // If connection type is unknown, just use the charge state
+                if (batteryPercentage == 100) {
+                    currentBatteryStatus = BatteryState.STATUS_FULL;
+                }
+                else if (chargingState == SceChargingState.NOT_CHARGING) {
+                    currentBatteryStatus = BatteryState.STATUS_DISCHARGING;
+                }
+                else if (chargingState == SceChargingState.CHARGING) {
+                    currentBatteryStatus = BatteryState.STATUS_CHARGING;
+                }
+                else {
+                    currentBatteryStatus = BatteryState.STATUS_UNKNOWN;
+                }
+            }
+        }
+        else {
+            return;
+        }
+
+        if (currentBatteryStatus != context.lastReportedBatteryStatus ||
+                !areBatteryCapacitiesEqual(currentBatteryCapacity, context.lastReportedBatteryCapacity)) {
+            byte state;
+            byte percentage;
+
+            switch (currentBatteryStatus) {
+                case BatteryState.STATUS_UNKNOWN:
+                    state = MoonBridge.LI_BATTERY_STATE_UNKNOWN;
+                    break;
+
+                case BatteryState.STATUS_CHARGING:
+                    state = MoonBridge.LI_BATTERY_STATE_CHARGING;
+                    break;
+
+                case BatteryState.STATUS_DISCHARGING:
+                    state = MoonBridge.LI_BATTERY_STATE_DISCHARGING;
+                    break;
+
+                case BatteryState.STATUS_NOT_CHARGING:
+                    state = MoonBridge.LI_BATTERY_STATE_NOT_CHARGING;
+                    break;
+
+                case BatteryState.STATUS_FULL:
+                    state = MoonBridge.LI_BATTERY_STATE_FULL;
+                    break;
+
+                default:
+                    return;
+            }
+
+            if (Float.isNaN(currentBatteryCapacity)) {
+                percentage = MoonBridge.LI_BATTERY_PERCENTAGE_UNKNOWN;
+            }
+            else {
+                percentage = (byte)(currentBatteryCapacity * 100);
+            }
+
+            conn.sendControllerBatteryEvent((byte)context.controllerNumber, state, percentage);
+
+            context.lastReportedBatteryStatus = currentBatteryStatus;
+            context.lastReportedBatteryCapacity = currentBatteryCapacity;
+        }
+    }
+
     private void sendControllerInputPacket(GenericControllerContext originalContext) {
         assignControllerNumberIfNeeded(originalContext);
 
         // Take the context's controller number and fuse all inputs with the same number
         short controllerNumber = originalContext.controllerNumber;
-        short inputMap = 0;
+        int inputMap = 0;
         byte leftTrigger = 0;
         byte rightTrigger = 0;
         short leftStickX = 0;
@@ -927,14 +1146,37 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         }
     }
 
-    // Return a valid keycode, 0 to consume, or -1 to not consume the event
+    private final int REMAP_IGNORE = -1;
+    private final int REMAP_CONSUME = -2;
+
+    // Return a valid keycode, -2 to consume, or -1 to not consume the event
     // Device MAY BE NULL
     private int handleRemapping(InputDeviceContext context, KeyEvent event) {
         // Don't capture the back button if configured
         if (context.ignoreBack) {
             if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
-                return -1;
+                return REMAP_IGNORE;
             }
+        }
+
+        // If we know this gamepad has a share button and receive an unmapped
+        // KEY_RECORD event, report that as a share button press.
+        if (context.hasShare) {
+            if (event.getKeyCode() == KeyEvent.KEYCODE_UNKNOWN &&
+                    event.getScanCode() == 167) {
+                return KeyEvent.KEYCODE_MEDIA_RECORD;
+            }
+        }
+
+        // The Shield's key layout files map the DualShock 4 clickpad button to
+        // BUTTON_SELECT instead of something sane like BUTTON_1 as the standard AOSP
+        // mapping does. If we get a button from a Sony device reported as BUTTON_SELECT
+        // that matches the keycode used by hid-sony for the clickpad, remap it to
+        // BUTTON_1 to match the current AOSP layout and trigger our touchpad button logic.
+        if (context.vendorId == 0x054c &&
+                event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_SELECT &&
+                event.getScanCode() == 317) {
+            return KeyEvent.KEYCODE_BUTTON_1;
         }
 
         // Override mode button for 8BitDo controllers
@@ -1023,7 +1265,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 case 316:
                     return KeyEvent.KEYCODE_BUTTON_MODE;
                 default:
-                    return 0;
+                    return REMAP_CONSUME;
             }
         }
         // If this is a Serval controller sending an unknown key code, it's probably
@@ -1254,6 +1496,124 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         sendControllerInputPacket(context);
     }
 
+    // Normalize the given raw float value into a 0.0-1.0f range
+    private float normalizeRawValueWithRange(float value, InputDevice.MotionRange range) {
+        value = Math.max(value, range.getMin());
+        value = Math.min(value, range.getMax());
+
+        value -= range.getMin();
+
+        return value / range.getRange();
+    }
+
+    private boolean sendTouchpadEventForPointer(InputDeviceContext context, MotionEvent event, byte touchType, int pointerIndex) {
+        float normalizedX = normalizeRawValueWithRange(event.getX(pointerIndex), context.touchpadXRange);
+        float normalizedY = normalizeRawValueWithRange(event.getY(pointerIndex), context.touchpadYRange);
+        float normalizedPressure = context.touchpadPressureRange != null ?
+                normalizeRawValueWithRange(event.getPressure(pointerIndex), context.touchpadPressureRange)
+                : 0;
+
+        return conn.sendControllerTouchEvent((byte)context.controllerNumber, touchType,
+                event.getPointerId(pointerIndex),
+                normalizedX, normalizedY, normalizedPressure) != MoonBridge.LI_ERR_UNSUPPORTED;
+    }
+
+    public boolean tryHandleTouchpadEvent(MotionEvent event) {
+        // Bail if this is not a touchpad event
+        if (event.getSource() != InputDevice.SOURCE_TOUCHPAD) {
+            return false;
+        }
+
+        // Only get a context if one already exists. We want to ensure we don't report non-gamepads.
+        InputDeviceContext context = inputDeviceContexts.get(event.getDeviceId());
+        if (context == null) {
+            return false;
+        }
+
+        byte touchType;
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+            case MotionEvent.ACTION_POINTER_DOWN:
+                touchType = MoonBridge.LI_TOUCH_EVENT_DOWN;
+                break;
+
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_POINTER_UP:
+                if ((event.getFlags() & MotionEvent.FLAG_CANCELED) != 0) {
+                    touchType = MoonBridge.LI_TOUCH_EVENT_CANCEL;
+                }
+                else {
+                    touchType = MoonBridge.LI_TOUCH_EVENT_UP;
+                }
+                break;
+
+            case MotionEvent.ACTION_MOVE:
+                touchType = MoonBridge.LI_TOUCH_EVENT_MOVE;
+                break;
+
+            case MotionEvent.ACTION_CANCEL:
+                // ACTION_CANCEL applies to *all* pointers in the gesture, so it maps to CANCEL_ALL
+                // rather than CANCEL. For a single pointer cancellation, that's indicated via
+                // FLAG_CANCELED on a ACTION_POINTER_UP.
+                // https://developer.android.com/develop/ui/views/touch-and-input/gestures/multi
+                touchType = MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL;
+                break;
+
+            case MotionEvent.ACTION_BUTTON_PRESS:
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && event.getActionButton() == MotionEvent.BUTTON_PRIMARY) {
+                    context.inputMap |= ControllerPacket.TOUCHPAD_FLAG;
+                    sendControllerInputPacket(context);
+                    return !prefConfig.gamepadTouchpadAsMouse; // Report as unhandled event to trigger mouse handling
+                }
+                return false;
+
+            case MotionEvent.ACTION_BUTTON_RELEASE:
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && event.getActionButton() == MotionEvent.BUTTON_PRIMARY) {
+                    context.inputMap &= ~ControllerPacket.TOUCHPAD_FLAG;
+                    sendControllerInputPacket(context);
+                    return !prefConfig.gamepadTouchpadAsMouse; // Report as unhandled event to trigger mouse handling
+                }
+                return false;
+
+            default:
+                return false;
+        }
+
+        // Bail if the user wants gamepad touchpads to control the mouse
+        //
+        // NB: We do this after processing ACTION_BUTTON_PRESS and ACTION_BUTTON_RELEASE
+        // because we want to still send the touchpad button via the gamepad even when
+        // configured to use the touchpad for mouse control.
+        if (prefConfig.gamepadTouchpadAsMouse) {
+            return false;
+        }
+
+        // If we don't have X and Y ranges, we can't process this event
+        if (context.touchpadXRange == null || context.touchpadYRange == null) {
+            return false;
+        }
+
+        if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
+            // Move events may impact all active pointers
+            for (int i = 0; i < event.getPointerCount(); i++) {
+                if (!sendTouchpadEventForPointer(context, event, touchType, i)) {
+                    // Controller touch events are not supported by the host
+                    return false;
+                }
+            }
+            return true;
+        }
+        else if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+            // Cancel impacts all active pointers
+            return conn.sendControllerTouchEvent((byte)context.controllerNumber, MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL,
+                    0, 0, 0, 0) != MoonBridge.LI_ERR_UNSUPPORTED;
+        }
+        else {
+            // Down and Up events impact the action index pointer
+            return sendTouchpadEventForPointer(context, event, touchType, event.getActionIndex());
+        }
+    }
+
     public boolean handleMotionEvent(MotionEvent event) {
         InputDeviceContext context = getContextForEvent(event);
         if (context == null) {
@@ -1365,6 +1725,64 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         vm.vibrate(combo.combine(), vibrationAttributes.build());
     }
 
+    @TargetApi(31)
+    private boolean hasQuadAmplitudeControlledRumbleVibrators(VibratorManager vm) {
+        int[] vibratorIds = vm.getVibratorIds();
+
+        // There must be exactly 4 vibrators on this device
+        if (vibratorIds.length != 4) {
+            return false;
+        }
+
+        // All vibrators must have amplitude control
+        for (int vid : vibratorIds) {
+            if (!vm.getVibrator(vid).hasAmplitudeControl()) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // This must only be called if hasQuadAmplitudeControlledRumbleVibrators() is true!
+    @TargetApi(31)
+    private void rumbleQuadVibrators(VibratorManager vm, short lowFreqMotor, short highFreqMotor, short leftTrigger, short rightTrigger) {
+        // Normalize motor values to 0-255 amplitudes for VibrationManager
+        highFreqMotor = (short)((highFreqMotor >> 8) & 0xFF);
+        lowFreqMotor = (short)((lowFreqMotor >> 8) & 0xFF);
+        leftTrigger = (short)((leftTrigger >> 8) & 0xFF);
+        rightTrigger = (short)((rightTrigger >> 8) & 0xFF);
+
+        // If they're all zero, we can just call cancel().
+        if (lowFreqMotor == 0 && highFreqMotor == 0 && leftTrigger == 0 && rightTrigger == 0) {
+            vm.cancel();
+            return;
+        }
+
+        // This is a guess based upon the behavior of FF_RUMBLE, but untested due to lack of Linux
+        // support for trigger rumble!
+        int[] vibratorIds = vm.getVibratorIds();
+        int[] vibratorAmplitudes = new int[] { highFreqMotor, lowFreqMotor, leftTrigger, rightTrigger };
+
+        CombinedVibration.ParallelCombination combo = CombinedVibration.startParallel();
+
+        for (int i = 0; i < vibratorIds.length; i++) {
+            // It's illegal to create a VibrationEffect with an amplitude of 0.
+            // Simply excluding that vibrator from our ParallelCombination will turn it off.
+            if (vibratorAmplitudes[i] != 0) {
+                combo.addVibrator(vibratorIds[i], VibrationEffect.createOneShot(60000, vibratorAmplitudes[i]));
+            }
+        }
+
+        VibrationAttributes.Builder vibrationAttributes = new VibrationAttributes.Builder();
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            vibrationAttributes.setUsage(VibrationAttributes.USAGE_MEDIA);
+        }
+
+        vm.vibrate(combo.combine(), vibrationAttributes.build());
+    }
+
     private void rumbleSingleVibrator(Vibrator vibrator, short lowFreqMotor, short highFreqMotor) {
         // Since we can only use a single amplitude value, compute the desired amplitude
         // by taking 80% of the big motor and 33% of the small motor, then capping to 255.
@@ -1435,19 +1853,30 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             if (deviceContext.controllerNumber == controllerNumber) {
                 foundMatchingDevice = true;
 
+                deviceContext.lowFreqMotor = lowFreqMotor;
+                deviceContext.highFreqMotor = highFreqMotor;
+
                 // Prefer the documented Android 12 rumble API which can handle dual vibrators on PS/Xbox controllers
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && deviceContext.vibratorManager != null) {
                     vibrated = true;
-                    rumbleDualVibrators(deviceContext.vibratorManager, lowFreqMotor, highFreqMotor);
+                    if (deviceContext.quadVibrators) {
+                        rumbleQuadVibrators(deviceContext.vibratorManager,
+                                deviceContext.lowFreqMotor, deviceContext.highFreqMotor,
+                                deviceContext.leftTriggerMotor, deviceContext.rightTriggerMotor);
+                    }
+                    else {
+                        rumbleDualVibrators(deviceContext.vibratorManager,
+                                deviceContext.lowFreqMotor, deviceContext.highFreqMotor);
+                    }
                 }
                 // On Shield devices, we can use their special API to rumble Shield controllers
-                else if (sceManager.rumble(deviceContext.inputDevice, lowFreqMotor, highFreqMotor)) {
+                else if (sceManager.rumble(deviceContext.inputDevice, deviceContext.lowFreqMotor, deviceContext.highFreqMotor)) {
                     vibrated = true;
                 }
                 // If all else fails, we have to try the old Vibrator API
                 else if (deviceContext.vibrator != null) {
                     vibrated = true;
-                    rumbleSingleVibrator(deviceContext.vibrator, lowFreqMotor, highFreqMotor);
+                    rumbleSingleVibrator(deviceContext.vibrator, deviceContext.lowFreqMotor, deviceContext.highFreqMotor);
                 }
             }
         }
@@ -1457,7 +1886,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
             if (deviceContext.controllerNumber == controllerNumber) {
                 foundMatchingDevice = vibrated = true;
-                deviceContext.device.rumble((short)lowFreqMotor, (short)highFreqMotor);
+                deviceContext.device.rumble(lowFreqMotor, highFreqMotor);
             }
         }
 
@@ -1477,6 +1906,162 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         }
     }
 
+    public void handleRumbleTriggers(short controllerNumber, short leftTrigger, short rightTrigger) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            for (int i = 0; i < inputDeviceContexts.size(); i++) {
+                InputDeviceContext deviceContext = inputDeviceContexts.valueAt(i);
+
+                if (deviceContext.controllerNumber == controllerNumber) {
+                    deviceContext.leftTriggerMotor = leftTrigger;
+                    deviceContext.rightTriggerMotor = rightTrigger;
+
+                    if (deviceContext.quadVibrators) {
+                        rumbleQuadVibrators(deviceContext.vibratorManager,
+                                deviceContext.lowFreqMotor, deviceContext.highFreqMotor,
+                                deviceContext.leftTriggerMotor, deviceContext.rightTriggerMotor);
+                    }
+                }
+            }
+        }
+
+        for (int i = 0; i < usbDeviceContexts.size(); i++) {
+            UsbDeviceContext deviceContext = usbDeviceContexts.valueAt(i);
+
+            if (deviceContext.controllerNumber == controllerNumber) {
+                deviceContext.device.rumbleTriggers(leftTrigger, rightTrigger);
+            }
+        }
+    }
+
+    public void handleSetMotionEventState(final short controllerNumber, final byte motionType, short reportRateHz) {
+        // Don't use motion sensors if the user turned them off
+        if (!prefConfig.gamepadMotionSensors) {
+            return;
+        }
+
+        // Report rate is restricted to <= 200 Hz without the HIGH_SAMPLING_RATE_SENSORS permission
+        reportRateHz = (short) Math.min(200, reportRateHz);
+
+        SensorEventListener newSensorListener = new SensorEventListener() {
+            private float[] lastValues = new float[3];
+
+            @Override
+            public void onSensorChanged(SensorEvent sensorEvent) {
+                // Android will invoke our callback any time we get a new reading,
+                // even if the values are the same as last time. Don't report a
+                // duplicate set of values to save bandwidth.
+                if (sensorEvent.values[0] == lastValues[0] &&
+                        sensorEvent.values[1] == lastValues[1] &&
+                        sensorEvent.values[2] == lastValues[2]) {
+                    return;
+                }
+                else {
+                    lastValues[0] = sensorEvent.values[0];
+                    lastValues[1] = sensorEvent.values[1];
+                    lastValues[2] = sensorEvent.values[2];
+                }
+
+                if (motionType == MoonBridge.LI_MOTION_TYPE_GYRO) {
+                    // Convert from rad/s to deg/s
+                    conn.sendControllerMotionEvent((byte) controllerNumber,
+                            motionType,
+                            sensorEvent.values[0] * 57.2957795f,
+                            sensorEvent.values[1] * 57.2957795f,
+                            sensorEvent.values[2] * 57.2957795f);
+                }
+                else {
+                    // Pass m/s^2 directly without conversion
+                    conn.sendControllerMotionEvent((byte) controllerNumber,
+                            motionType,
+                            sensorEvent.values[0],
+                            sensorEvent.values[1],
+                            sensorEvent.values[2]);
+                }
+            }
+
+            @Override
+            public void onAccuracyChanged(Sensor sensor, int accuracy) {}
+        };
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            for (int i = 0; i < inputDeviceContexts.size(); i++) {
+                InputDeviceContext deviceContext = inputDeviceContexts.valueAt(i);
+
+                if (deviceContext.controllerNumber == controllerNumber) {
+                    SensorManager sm = deviceContext.inputDevice.getSensorManager();
+
+                    switch (motionType) {
+                        case MoonBridge.LI_MOTION_TYPE_ACCEL:
+                            if (deviceContext.accelListener != null) {
+                                sm.unregisterListener(deviceContext.accelListener);
+                                deviceContext.accelListener = null;
+                            }
+
+                            // Enable the accelerometer if requested
+                            Sensor accelSensor = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER, false);
+                            if (reportRateHz != 0 && accelSensor != null) {
+                                sm.registerListener(newSensorListener, accelSensor, 1000000 / reportRateHz);
+                                deviceContext.accelListener = newSensorListener;
+                                deviceContext.accelReportRateHz = reportRateHz;
+                            }
+                            else {
+                                deviceContext.accelReportRateHz = 0;
+                            }
+                            break;
+                        case MoonBridge.LI_MOTION_TYPE_GYRO:
+                            if (deviceContext.gyroListener != null) {
+                                sm.unregisterListener(deviceContext.gyroListener);
+                                deviceContext.gyroListener = null;
+                            }
+
+                            // Enable the gyroscope if requested
+                            Sensor gyroSensor = sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE, false);
+                            if (reportRateHz != 0 && gyroSensor != null) {
+                                sm.registerListener(newSensorListener, gyroSensor,1000000 / reportRateHz);
+                                deviceContext.gyroListener = newSensorListener;
+                                deviceContext.gyroReportRateHz = reportRateHz;
+                            }
+                            else {
+                                deviceContext.gyroReportRateHz = 0;
+                            }
+                            break;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    public void handleSetControllerLED(short controllerNumber, byte r, byte g, byte b) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            for (int i = 0; i < inputDeviceContexts.size(); i++) {
+                InputDeviceContext deviceContext = inputDeviceContexts.valueAt(i);
+
+                if (deviceContext.controllerNumber == controllerNumber) {
+                    // Create a new light session if one doesn't already exist
+                    if (deviceContext.lightsSession == null) {
+                        deviceContext.lightsSession = deviceContext.inputDevice.getLightsManager().openSession();
+                    }
+
+                    // Convert the RGB components into the integer value that LightState uses
+                    int argbValue = 0xFF000000 | ((r << 16) & 0xFF0000) | ((g << 8) & 0xFF00) | (b & 0xFF);
+                    LightState lightState = new LightState.Builder().setColor(argbValue).build();
+
+                    // Set the RGB value for each RGB-controllable LED on the device
+                    LightsRequest.Builder lightsRequestBuilder = new LightsRequest.Builder();
+                    for (Light light : deviceContext.inputDevice.getLightsManager().getLights()) {
+                        if (light.hasRgbControl()) {
+                            lightsRequestBuilder.addLight(light, lightState);
+                        }
+                    }
+
+                    // Apply the LED changes
+                    deviceContext.lightsSession.requestLights(lightsRequestBuilder.build());
+                }
+            }
+        }
+    }
+
     public boolean handleButtonUp(KeyEvent event) {
         InputDeviceContext context = getContextForEvent(event);
         if (context == null) {
@@ -1484,13 +2069,12 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         }
 
         int keyCode = handleRemapping(context, event);
+        if (keyCode < 0) {
+            return (keyCode == REMAP_CONSUME);
+        }
 
         if (prefConfig.flipFaceButtons) {
             keyCode = handleFlipFaceButtons(keyCode);
-        }
-
-        if (keyCode == 0) {
-            return true;
         }
 
         // If the button hasn't been down long enough, sleep for a bit before sending the up event
@@ -1561,6 +2145,34 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             }
             context.inputMap &= ~ControllerPacket.DOWN_FLAG;
             break;
+        case KeyEvent.KEYCODE_DPAD_UP_LEFT:
+            if (context.hatXAxisUsed && context.hatYAxisUsed) {
+                // Suppress this duplicate event if we have a hat
+                return true;
+            }
+            context.inputMap &= ~(ControllerPacket.UP_FLAG | ControllerPacket.LEFT_FLAG);
+            break;
+        case KeyEvent.KEYCODE_DPAD_UP_RIGHT:
+            if (context.hatXAxisUsed && context.hatYAxisUsed) {
+                // Suppress this duplicate event if we have a hat
+                return true;
+            }
+            context.inputMap &= ~(ControllerPacket.UP_FLAG | ControllerPacket.RIGHT_FLAG);
+            break;
+        case KeyEvent.KEYCODE_DPAD_DOWN_LEFT:
+            if (context.hatXAxisUsed && context.hatYAxisUsed) {
+                // Suppress this duplicate event if we have a hat
+                return true;
+            }
+            context.inputMap &= ~(ControllerPacket.DOWN_FLAG | ControllerPacket.LEFT_FLAG);
+            break;
+        case KeyEvent.KEYCODE_DPAD_DOWN_RIGHT:
+            if (context.hatXAxisUsed && context.hatYAxisUsed) {
+                // Suppress this duplicate event if we have a hat
+                return true;
+            }
+            context.inputMap &= ~(ControllerPacket.DOWN_FLAG | ControllerPacket.RIGHT_FLAG);
+            break;
         case KeyEvent.KEYCODE_BUTTON_B:
             context.inputMap &= ~ControllerPacket.B_FLAG;
             break;
@@ -1588,6 +2200,12 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         case KeyEvent.KEYCODE_BUTTON_THUMBR:
             context.inputMap &= ~ControllerPacket.RS_CLK_FLAG;
             break;
+        case KeyEvent.KEYCODE_MEDIA_RECORD: // Xbox Series X Share button
+            context.inputMap &= ~ControllerPacket.MISC_FLAG;
+            break;
+        case KeyEvent.KEYCODE_BUTTON_1: // PS4/PS5 touchpad button (prior to 4.10)
+            context.inputMap &= ~ControllerPacket.TOUCHPAD_FLAG;
+            break;
         case KeyEvent.KEYCODE_BUTTON_L2:
             if (context.leftTriggerAxisUsed) {
                 // Suppress this digital event if an analog trigger is active
@@ -1601,6 +2219,31 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 return true;
             }
             context.rightTrigger = 0;
+            break;
+        case KeyEvent.KEYCODE_UNKNOWN:
+            // Paddles aren't mapped in any of the Android key layout files,
+            // so we need to handle the evdev key codes directly.
+            if (context.hasPaddles) {
+                switch (event.getScanCode()) {
+                    case 0x2c4: // BTN_TRIGGER_HAPPY5
+                        context.inputMap &= ~ControllerPacket.PADDLE1_FLAG;
+                        break;
+                    case 0x2c5: // BTN_TRIGGER_HAPPY6
+                        context.inputMap &= ~ControllerPacket.PADDLE2_FLAG;
+                        break;
+                    case 0x2c6: // BTN_TRIGGER_HAPPY7
+                        context.inputMap &= ~ControllerPacket.PADDLE3_FLAG;
+                        break;
+                    case 0x2c7: // BTN_TRIGGER_HAPPY8
+                        context.inputMap &= ~ControllerPacket.PADDLE4_FLAG;
+                        break;
+                    default:
+                        return false;
+                }
+            }
+            else {
+                return false;
+            }
             break;
         default:
             return false;
@@ -1650,13 +2293,12 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         }
 
         int keyCode = handleRemapping(context, event);
+        if (keyCode < 0) {
+            return (keyCode == REMAP_CONSUME);
+        }
 
         if (prefConfig.flipFaceButtons) {
             keyCode = handleFlipFaceButtons(keyCode);
-        }
-
-        if (keyCode == 0) {
-            return true;
         }
 
         switch (keyCode) {
@@ -1704,6 +2346,34 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             }
             context.inputMap |= ControllerPacket.DOWN_FLAG;
             break;
+        case KeyEvent.KEYCODE_DPAD_UP_LEFT:
+            if (context.hatXAxisUsed && context.hatYAxisUsed) {
+                // Suppress this duplicate event if we have a hat
+                return true;
+            }
+            context.inputMap |= ControllerPacket.UP_FLAG | ControllerPacket.LEFT_FLAG;
+            break;
+        case KeyEvent.KEYCODE_DPAD_UP_RIGHT:
+            if (context.hatXAxisUsed && context.hatYAxisUsed) {
+                // Suppress this duplicate event if we have a hat
+                return true;
+            }
+            context.inputMap |= ControllerPacket.UP_FLAG | ControllerPacket.RIGHT_FLAG;
+            break;
+        case KeyEvent.KEYCODE_DPAD_DOWN_LEFT:
+            if (context.hatXAxisUsed && context.hatYAxisUsed) {
+                // Suppress this duplicate event if we have a hat
+                return true;
+            }
+            context.inputMap |= ControllerPacket.DOWN_FLAG | ControllerPacket.LEFT_FLAG;
+            break;
+        case KeyEvent.KEYCODE_DPAD_DOWN_RIGHT:
+            if (context.hatXAxisUsed && context.hatYAxisUsed) {
+                // Suppress this duplicate event if we have a hat
+                return true;
+            }
+            context.inputMap |= ControllerPacket.DOWN_FLAG | ControllerPacket.RIGHT_FLAG;
+            break;
         case KeyEvent.KEYCODE_BUTTON_B:
             context.inputMap |= ControllerPacket.B_FLAG;
             break;
@@ -1729,6 +2399,12 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         case KeyEvent.KEYCODE_BUTTON_THUMBR:
             context.inputMap |= ControllerPacket.RS_CLK_FLAG;
             break;
+        case KeyEvent.KEYCODE_MEDIA_RECORD: // Xbox Series X Share button
+            context.inputMap |= ControllerPacket.MISC_FLAG;
+            break;
+        case KeyEvent.KEYCODE_BUTTON_1: // PS4/PS5 touchpad button (prior to 4.10)
+            context.inputMap |= ControllerPacket.TOUCHPAD_FLAG;
+            break;
         case KeyEvent.KEYCODE_BUTTON_L2:
             if (context.leftTriggerAxisUsed) {
                 // Suppress this digital event if an analog trigger is active
@@ -1742,6 +2418,31 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 return true;
             }
             context.rightTrigger = (byte)0xFF;
+            break;
+        case KeyEvent.KEYCODE_UNKNOWN:
+            // Paddles aren't mapped in any of the Android key layout files,
+            // so we need to handle the evdev key codes directly.
+            if (context.hasPaddles) {
+                switch (event.getScanCode()) {
+                    case 0x2c4: // BTN_TRIGGER_HAPPY5
+                        context.inputMap |= ControllerPacket.PADDLE1_FLAG;
+                        break;
+                    case 0x2c5: // BTN_TRIGGER_HAPPY6
+                        context.inputMap |= ControllerPacket.PADDLE2_FLAG;
+                        break;
+                    case 0x2c6: // BTN_TRIGGER_HAPPY7
+                        context.inputMap |= ControllerPacket.PADDLE3_FLAG;
+                        break;
+                    case 0x2c7: // BTN_TRIGGER_HAPPY8
+                        context.inputMap |= ControllerPacket.PADDLE4_FLAG;
+                        break;
+                    default:
+                        return false;
+                }
+            }
+            else {
+                return false;
+            }
             break;
         default:
             return false;
@@ -1798,7 +2499,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         return true;
     }
 
-    public void reportOscState(short buttonFlags,
+    public void reportOscState(int buttonFlags,
                                short leftStickX, short leftStickY,
                                short rightStickX, short rightStickY,
                                byte leftTrigger, byte rightTrigger) {
@@ -1817,7 +2518,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     }
 
     @Override
-    public void reportControllerState(int controllerId, short buttonFlags,
+    public void reportControllerState(int controllerId, int buttonFlags,
                                       float leftStickX, float leftStickY,
                                       float rightStickX, float rightStickY,
                                       float leftTrigger, float rightTrigger) {
@@ -1872,7 +2573,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         usbDeviceContexts.put(controller.getControllerId(), context);
     }
 
-    class GenericControllerContext implements GameInputDevice {
+    class GenericControllerContext {
         public int id;
         public boolean external;
 
@@ -1887,7 +2588,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         public boolean reservedControllerNumber;
         public short controllerNumber;
 
-        public short inputMap = 0x0000;
+        public int inputMap = 0;
         public byte leftTrigger = 0x00;
         public byte rightTrigger = 0x00;
         public short rightStickX = 0x0000;
@@ -1896,7 +2597,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         public short leftStickY = 0x0000;
 
         public boolean mouseEmulationActive;
-        public short mouseEmulationLastInputMap;
+        public int mouseEmulationLastInputMap;
         public final int mouseEmulationReportPeriod = 50;
 
         public final Runnable mouseEmulationRunnable = new Runnable() {
@@ -1915,7 +2616,6 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             }
         };
 
-        @Override
         public List<GameMenu.MenuOption> getGameMenuOptions() {
             List<GameMenu.MenuOption> options = new ArrayList<>();
             options.add(new GameMenu.MenuOption(activityContext.getString(mouseEmulationActive ?
@@ -1939,13 +2639,30 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             mouseEmulationActive = false;
             handler.removeCallbacks(mouseEmulationRunnable);
         }
+
+        public void sendControllerArrival() {}
     }
 
-    class InputDeviceContext extends GenericControllerContext {
+    public class InputDeviceContext extends GenericControllerContext {
         public String name;
         public VibratorManager vibratorManager;
         public Vibrator vibrator;
+        public boolean quadVibrators;
+        public short lowFreqMotor, highFreqMotor;
+        public short leftTriggerMotor, rightTriggerMotor;
+
+        public SensorEventListener gyroListener;
+        public short gyroReportRateHz;
+        public SensorEventListener accelListener;
+        public short accelReportRateHz;
+
         public InputDevice inputDevice;
+
+        public LightsManager.LightsSession lightsSession;
+
+        // These are BatteryState values, not Moonlight values
+        public int lastReportedBatteryStatus;
+        public float lastReportedBatteryCapacity;
 
         public int leftStickXAxis = -1;
         public int leftStickYAxis = -1;
@@ -1962,6 +2679,10 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         public int hatYAxis = -1;
         public boolean hatXAxisUsed, hatYAxisUsed;
 
+        InputDevice.MotionRange touchpadXRange;
+        InputDevice.MotionRange touchpadYRange;
+        InputDevice.MotionRange touchpadPressureRange;
+
         public boolean isNonStandardDualShock4;
         public boolean usesLinuxGamepadStandardFaceButtons;
         public boolean isNonStandardXboxBtController;
@@ -1976,6 +2697,8 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         public int emulatingButtonFlags = 0;
         public boolean hasSelect;
         public boolean hasMode;
+        public boolean hasPaddles;
+        public boolean hasShare;
 
         // Used for OUYA bumper state tracking since they force all buttons
         // up when the OUYA button goes down. We watch the last time we get
@@ -1987,6 +2710,16 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
         public long startDownTime = 0;
 
+        public final Runnable batteryStateUpdateRunnable = new Runnable() {
+            @Override
+            public void run() {
+                sendControllerBatteryPacket(InputDeviceContext.this);
+
+                // Requeue the callback
+                handler.postDelayed(this, BATTERY_RECHECK_INTERVAL_MS);
+            }
+        };
+
         @Override
         public void destroy() {
             super.destroy();
@@ -1996,6 +2729,194 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             }
             else if (vibrator != null) {
                 vibrator.cancel();
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (gyroListener != null) {
+                    inputDevice.getSensorManager().unregisterListener(gyroListener);
+                }
+                if (accelListener != null) {
+                    inputDevice.getSensorManager().unregisterListener(accelListener);
+                }
+
+                if (lightsSession != null) {
+                    lightsSession.close();
+                }
+            }
+
+            handler.removeCallbacks(batteryStateUpdateRunnable);
+        }
+
+        @Override
+        public void sendControllerArrival() {
+            // Below KitKat we can't get enough information to report controller details accurately
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.KITKAT) {
+                return;
+            }
+
+            byte type = MoonBridge.LI_CTYPE_UNKNOWN;
+            switch (inputDevice.getVendorId()) {
+                case 0x045e: // Microsoft
+                    type = MoonBridge.LI_CTYPE_XBOX;
+                    break;
+                case 0x054c: // Sony
+                    type = MoonBridge.LI_CTYPE_PS;
+                    break;
+                case 0x057e: // Nintendo
+                    type = MoonBridge.LI_CTYPE_NINTENDO;
+                    break;
+                default:
+                    // Consult SDL's controller type list to see if it knows
+                    type = MoonBridge.guessControllerType(inputDevice.getVendorId(), inputDevice.getProductId());
+                    break;
+            }
+
+            int supportedButtonFlags = 0;
+            for (Map.Entry<Integer, Integer> entry : ANDROID_TO_LI_BUTTON_MAP.entrySet()) {
+                if (inputDevice.hasKeys(entry.getKey())[0]) {
+                    supportedButtonFlags |= entry.getValue();
+                }
+            }
+
+            // Add non-standard button flags that may not be mapped in the Android kl file
+            if (hasPaddles) {
+                supportedButtonFlags |=
+                        ControllerPacket.PADDLE1_FLAG |
+                        ControllerPacket.PADDLE2_FLAG |
+                        ControllerPacket.PADDLE3_FLAG |
+                        ControllerPacket.PADDLE4_FLAG;
+            }
+            if (hasShare) {
+                supportedButtonFlags |= ControllerPacket.MISC_FLAG;
+            }
+
+            if (getMotionRangeForJoystickAxis(inputDevice, MotionEvent.AXIS_HAT_X) != null) {
+                supportedButtonFlags |= ControllerPacket.LEFT_FLAG | ControllerPacket.RIGHT_FLAG;
+            }
+            if (getMotionRangeForJoystickAxis(inputDevice, MotionEvent.AXIS_HAT_Y) != null) {
+                supportedButtonFlags |= ControllerPacket.UP_FLAG | ControllerPacket.DOWN_FLAG;
+            }
+
+            short capabilities = 0;
+
+            // Most of the advanced InputDevice capabilities came in Android S
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (hasQuadAmplitudeControlledRumbleVibrators(inputDevice.getVibratorManager())) {
+                    capabilities |= MoonBridge.LI_CCAP_RUMBLE | MoonBridge.LI_CCAP_TRIGGER_RUMBLE;
+                }
+                else if (hasDualAmplitudeControlledRumbleVibrators(inputDevice.getVibratorManager())) {
+                    capabilities |= MoonBridge.LI_CCAP_RUMBLE;
+                }
+
+                if (inputDevice.getSensorManager().getDefaultSensor(Sensor.TYPE_ACCELEROMETER) != null) {
+                    capabilities |= MoonBridge.LI_CCAP_ACCEL;
+                }
+                if (inputDevice.getSensorManager().getDefaultSensor(Sensor.TYPE_GYROSCOPE) != null) {
+                    capabilities |= MoonBridge.LI_CCAP_GYRO;
+                }
+
+                if (inputDevice.getBatteryState().isPresent()) {
+                    capabilities |= MoonBridge.LI_CCAP_BATTERY_STATE;
+                }
+
+                for (Light light : inputDevice.getLightsManager().getLights()) {
+                    if (light.hasRgbControl()) {
+                        // Light.hasRgbControl() was totally broken prior to Android 14.
+                        // It always returned true because LIGHT_CAPABILITY_RGB was defined as 0,
+                        // so we will just guess RGB is supported if it's a PlayStation controller.
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE || type == MoonBridge.LI_CTYPE_PS) {
+                            capabilities |= MoonBridge.LI_CCAP_RGB_LED;
+                        }
+                    }
+                }
+            }
+
+            // Report analog triggers if we have at least one trigger axis
+            if (leftTriggerAxis != -1 || rightTriggerAxis != -1) {
+                capabilities |= MoonBridge.LI_CCAP_ANALOG_TRIGGERS;
+            }
+
+            // We can perform basic rumble with any vibrator
+            if (vibrator != null) {
+                capabilities |= MoonBridge.LI_CCAP_RUMBLE;
+            }
+
+            // Shield controllers use special APIs for rumble and battery state
+            if (sceManager.isRecognizedDevice(inputDevice)) {
+                capabilities |= MoonBridge.LI_CCAP_RUMBLE | MoonBridge.LI_CCAP_BATTERY_STATE;
+            }
+
+            if ((inputDevice.getSources() & InputDevice.SOURCE_TOUCHPAD) == InputDevice.SOURCE_TOUCHPAD) {
+                capabilities |= MoonBridge.LI_CCAP_TOUCHPAD;
+
+                // Use the platform API or internal heuristics to determine if this has a clickpad
+                if (hasButtonUnderTouchpad(inputDevice, type)) {
+                    supportedButtonFlags |= ControllerPacket.TOUCHPAD_FLAG;
+                }
+            }
+
+            conn.sendControllerArrivalEvent((byte)controllerNumber, getActiveControllerMask(),
+                    type, supportedButtonFlags, capabilities);
+
+            // After reporting arrival to the host, send initial battery state and begin monitoring
+            sendControllerBatteryPacket(this);
+            handler.postDelayed(batteryStateUpdateRunnable, BATTERY_RECHECK_INTERVAL_MS);
+        }
+
+        public void migrateContext(InputDeviceContext oldContext) {
+            // Take ownership of the sensor and light sessions
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                this.gyroReportRateHz = oldContext.gyroReportRateHz;
+                this.accelReportRateHz = oldContext.accelReportRateHz;
+                this.lightsSession = oldContext.lightsSession;
+                this.gyroListener = oldContext.gyroListener;
+                this.accelListener = oldContext.accelListener;
+                oldContext.lightsSession = null;
+                oldContext.gyroListener = null;
+                oldContext.accelListener = null;
+            }
+
+            // Don't release the controller number, because we will carry it over if it is present.
+            // We also want to make sure the change is invisible to the host PC to avoid an add/remove
+            // cycle for the gamepad which may break some games.
+            oldContext.destroy();
+
+            // Copy over existing controller number state
+            this.assignedControllerNumber = oldContext.assignedControllerNumber;
+            this.reservedControllerNumber = oldContext.reservedControllerNumber;
+            this.controllerNumber = oldContext.controllerNumber;
+
+            // Refresh battery state and start the battery state polling again
+            sendControllerBatteryPacket(this);
+            handler.postDelayed(batteryStateUpdateRunnable, BATTERY_RECHECK_INTERVAL_MS);
+        }
+
+        public void disableSensors() {
+            // Unregister all sensor listeners
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (gyroListener != null) {
+                    inputDevice.getSensorManager().unregisterListener(gyroListener);
+                    gyroListener = null;
+
+                    // Send a gyro event to ensure the virtual controller is stationary
+                    conn.sendControllerMotionEvent((byte) controllerNumber, MoonBridge.LI_MOTION_TYPE_GYRO, 0.f, 0.f, 0.f);
+                }
+                if (accelListener != null) {
+                    inputDevice.getSensorManager().unregisterListener(accelListener);
+                    accelListener = null;
+
+                    // We leave the acceleration as-is to preserve the attitude of the controller
+                }
+            }
+        }
+
+        public void enableSensors() {
+            // Turn back on any sensors that should be reporting but are currently unregistered
+            if (accelReportRateHz != 0 && accelListener == null) {
+                handleSetMotionEventState(controllerNumber, MoonBridge.LI_MOTION_TYPE_ACCEL, accelReportRateHz);
+            }
+            if (gyroReportRateHz != 0 && gyroListener == null) {
+                handleSetMotionEventState(controllerNumber, MoonBridge.LI_MOTION_TYPE_GYRO, gyroReportRateHz);
             }
         }
     }
@@ -2008,6 +2929,12 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             super.destroy();
 
             // Nothing for now
+        }
+
+        @Override
+        public void sendControllerArrival() {
+            conn.sendControllerArrivalEvent((byte)controllerNumber, getActiveControllerMask(),
+                    device.getType(), device.getSupportedButtonFlags(), device.getCapabilities());
         }
     }
 }

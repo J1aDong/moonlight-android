@@ -4,6 +4,7 @@ import android.app.AlertDialog;
 import android.os.Handler;
 import android.widget.ArrayAdapter;
 
+import com.limelight.binding.input.ControllerHandler;
 import com.limelight.binding.input.GameInputDevice;
 import com.limelight.binding.input.KeyboardTranslator;
 import com.limelight.nvstream.NvConnection;
@@ -40,9 +41,9 @@ public class GameMenu {
 
     private final Game game;
     private final NvConnection conn;
-    private final GameInputDevice device;
+    private final ControllerHandler.InputDeviceContext device;
 
-    public GameMenu(Game game, NvConnection conn, GameInputDevice device) {
+    public GameMenu(Game game, NvConnection conn, ControllerHandler.InputDeviceContext device) {
         this.game = game;
         this.conn = conn;
         this.device = device;

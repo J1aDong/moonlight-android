@@ -3,22 +3,26 @@ apply plugin: 'com.android.application'
 android {
     ndkVersion "23.2.8568313"
 
-    compileSdk 33
+    compileSdk 34
 
     namespace 'com.limelight'
 
     defaultConfig {
         minSdk 16
-        targetSdk 33
+        targetSdk 34
 
         versionName "11.0"
-        versionCode = 304
+        versionCode = 306
 
         // Generate native debug symbols to allow Google Play to symbolicate our native crashes
         ndk.debugSymbolLevel = 'FULL'
     }
 
     flavorDimensions.add("root")
+
+    buildFeatures {
+        buildConfig = true
+    }
 
     productFlavors {
         root {

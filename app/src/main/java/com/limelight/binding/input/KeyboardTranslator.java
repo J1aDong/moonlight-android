@@ -63,7 +63,6 @@ public class KeyboardTranslator implements InputManager.InputDeviceListener {
     public static final int VK_LSHIFT = 160;
     public static final int VK_LCONTROL = 162;
 
-
     private static class KeyboardMapping {
         private final InputDevice device;
         private final int[] deviceKeyCodeToQwertyKeyCode;
@@ -197,7 +196,7 @@ public class KeyboardTranslator implements InputManager.InputDeviceListener {
                 break;
                 
             case KeyEvent.KEYCODE_CTRL_LEFT:
-                translated = VK_LCONTROL;
+                translated = 0xA2;
                 break;
 
             case KeyEvent.KEYCODE_CTRL_RIGHT:
@@ -234,11 +233,15 @@ public class KeyboardTranslator implements InputManager.InputDeviceListener {
                 break;
 
             case KeyEvent.KEYCODE_META_LEFT:
-                translated = VK_LWIN;
+                translated = 0x5b;
                 break;
 
             case KeyEvent.KEYCODE_META_RIGHT:
                 translated = 0x5c;
+                break;
+
+            case KeyEvent.KEYCODE_MENU:
+                translated = 0x5d;
                 break;
 
             case KeyEvent.KEYCODE_MINUS:
@@ -282,7 +285,7 @@ public class KeyboardTranslator implements InputManager.InputDeviceListener {
                 break;
                 
             case KeyEvent.KEYCODE_SHIFT_LEFT:
-                translated = VK_LSHIFT;
+                translated = 0xA0;
                 break;
 
             case KeyEvent.KEYCODE_SHIFT_RIGHT:

@@ -10,6 +10,13 @@ import android.view.Display;
 import com.limelight.nvstream.jni.MoonBridge;
 
 public class PreferenceConfiguration {
+    public enum FormatOption {
+        AUTO,
+        FORCE_AV1,
+        FORCE_HEVC,
+        FORCE_H264,
+    };
+
     private static final String LEGACY_RES_FPS_PREF_STRING = "list_resolution_fps";
     private static final String LEGACY_ENABLE_51_SURROUND_PREF_STRING = "checkbox_51_surround";
 
@@ -50,6 +57,8 @@ public class PreferenceConfiguration {
     private static final String ENABLE_AUDIO_FX_PREF_STRING = "checkbox_enable_audiofx";
     private static final String REDUCE_REFRESH_RATE_PREF_STRING = "checkbox_reduce_refresh_rate";
     private static final String FULL_RANGE_PREF_STRING = "checkbox_full_range";
+    private static final String GAMEPAD_TOUCHPAD_AS_MOUSE_PREF_STRING = "checkbox_gamepad_touchpad_as_mouse";
+    private static final String GAMEPAD_MOTION_SENSORS_PREF_STRING = "checkbox_gamepad_motion_sensors";
 
     static final String DEFAULT_RESOLUTION = "1280x720";
     static final String DEFAULT_FPS = "60";
@@ -58,12 +67,13 @@ public class PreferenceConfiguration {
     private static final boolean DEFAULT_DISABLE_TOASTS = false;
     private static final boolean DEFAULT_HOST_AUDIO = false;
     private static final int DEFAULT_DEADZONE = 7;
-    private static final int DEFAULT_GYROASSIST = 10;
+    private static final boolean DEFAULT_GYROASSIST = false;
     private static final int DEFAULT_OPACITY = 90;
     public static final String DEFAULT_LANGUAGE = "default";
     private static final boolean DEFAULT_MULTI_CONTROLLER = true;
     private static final boolean DEFAULT_USB_DRIVER = true;
     private static final String DEFAULT_VIDEO_FORMAT = "auto";
+
     private static final boolean ONSCREEN_CONTROLLER_DEFAULT = false;
     private static final boolean ONLY_L3_R3_DEFAULT = false;
     private static final boolean DEFAULT_ENABLE_HDR = false;
@@ -84,10 +94,8 @@ public class PreferenceConfiguration {
     private static final boolean DEFAULT_ENABLE_AUDIO_FX = false;
     private static final boolean DEFAULT_REDUCE_REFRESH_RATE = false;
     private static final boolean DEFAULT_FULL_RANGE = false;
-
-    public static final int FORCE_H265_ON = -1;
-    public static final int AUTOSELECT_H265 = 0;
-    public static final int FORCE_H265_OFF = 1;
+    private static final boolean DEFAULT_GAMEPAD_TOUCHPAD_AS_MOUSE = false;
+    private static final boolean DEFAULT_GAMEPAD_MOTION_SENSORS = true;
 
     public static final int FRAME_PACING_MIN_LATENCY = 0;
     public static final int FRAME_PACING_BALANCED = 1;
@@ -104,9 +112,9 @@ public class PreferenceConfiguration {
 
     public int width, height, fps;
     public int bitrate;
-    public int videoFormat;
+    public FormatOption videoFormat;
     public int deadzonePercentage;
-    public float gyroSensitivity;
+    public boolean gyroSensitivity;
     public int oscOpacity;
     public boolean stretchVideo, enableSops, playHostAudio, disableWarnings;
     public String language;
@@ -130,6 +138,8 @@ public class PreferenceConfiguration {
     public boolean enableAudioFx;
     public boolean reduceRefreshRate;
     public boolean fullRange;
+    public boolean gamepadMotionSensors;
+    public boolean gamepadTouchpadAsMouse;
 
     public static boolean isNativeResolution(int width, int height) {
         // It's not a native resolution if it matches an existing resolution option
@@ -292,22 +302,25 @@ public class PreferenceConfiguration {
                 prefs.getString(FPS_PREF_STRING, DEFAULT_FPS));
     }
 
-    private static int getVideoFormatValue(Context context) {
+    private static FormatOption getVideoFormatValue(Context context) {
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
 
         String str = prefs.getString(VIDEO_FORMAT_PREF_STRING, DEFAULT_VIDEO_FORMAT);
         if (str.equals("auto")) {
-            return AUTOSELECT_H265;
+            return FormatOption.AUTO;
+        }
+        else if (str.equals("forceav1")) {
+            return FormatOption.FORCE_AV1;
         }
         else if (str.equals("forceh265")) {
-            return FORCE_H265_ON;
+            return FormatOption.FORCE_HEVC;
         }
         else if (str.equals("neverh265")) {
-            return FORCE_H265_OFF;
+            return FormatOption.FORCE_H264;
         }
         else {
             // Should never get here
-            return AUTOSELECT_H265;
+            return FormatOption.AUTO;
         }
     }
 
@@ -482,7 +495,7 @@ public class PreferenceConfiguration {
         config.framePacing = getFramePacingValue(context);
 
         config.deadzonePercentage = prefs.getInt(DEADZONE_PREF_STRING, DEFAULT_DEADZONE);
-        config.gyroSensitivity = prefs.getInt(GYROASSIST_PREF_STRING, DEFAULT_GYROASSIST);
+        config.gyroSensitivity = prefs.getBoolean(GYROASSIST_PREF_STRING,DEFAULT_GYROASSIST);
 
         config.oscOpacity = prefs.getInt(OSC_OPACITY_PREF_STRING, DEFAULT_OPACITY);
 
@@ -514,6 +527,8 @@ public class PreferenceConfiguration {
         config.enableAudioFx = prefs.getBoolean(ENABLE_AUDIO_FX_PREF_STRING, DEFAULT_ENABLE_AUDIO_FX);
         config.reduceRefreshRate = prefs.getBoolean(REDUCE_REFRESH_RATE_PREF_STRING, DEFAULT_REDUCE_REFRESH_RATE);
         config.fullRange = prefs.getBoolean(FULL_RANGE_PREF_STRING, DEFAULT_FULL_RANGE);
+        config.gamepadTouchpadAsMouse = prefs.getBoolean(GAMEPAD_TOUCHPAD_AS_MOUSE_PREF_STRING, DEFAULT_GAMEPAD_TOUCHPAD_AS_MOUSE);
+        config.gamepadMotionSensors = prefs.getBoolean(GAMEPAD_MOTION_SENSORS_PREF_STRING, DEFAULT_GAMEPAD_MOTION_SENSORS);
 
         return config;
     }

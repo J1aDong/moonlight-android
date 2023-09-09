@@ -22,9 +22,9 @@ public class StreamConfiguration {
     private int maxPacketSize;
     private int remote;
     private MoonBridge.AudioConfiguration audioConfiguration;
-    private boolean supportsHevc;
+    private int supportedVideoFormats;
     private int hevcBitratePercentageMultiplier;
-    private boolean enableHdr;
+    private int av1BitratePercentageMultiplier;
     private int attachedGamepadMask;
     private int encryptionFlags;
     private int colorRange;
@@ -90,8 +90,8 @@ public class StreamConfiguration {
             return this;
         }
 
-        public StreamConfiguration.Builder setEnableHdr(boolean enableHdr) {
-            config.enableHdr = enableHdr;
+        public StreamConfiguration.Builder setAv1BitratePercentageMultiplier(int multiplier) {
+            config.av1BitratePercentageMultiplier = multiplier;
             return this;
         }
 
@@ -135,8 +135,8 @@ public class StreamConfiguration {
             return this;
         }
         
-        public StreamConfiguration.Builder setHevcSupported(boolean supportsHevc) {
-            config.supportsHevc = supportsHevc;
+        public StreamConfiguration.Builder setSupportedVideoFormats(int supportedVideoFormats) {
+            config.supportedVideoFormats = supportedVideoFormats;
             return this;
         }
 
@@ -168,8 +168,7 @@ public class StreamConfiguration {
         this.sops = true;
         this.enableAdaptiveResolution = false;
         this.audioConfiguration = MoonBridge.AUDIO_CONFIGURATION_STEREO;
-        this.supportsHevc = false;
-        this.enableHdr = false;
+        this.supportedVideoFormats = MoonBridge.VIDEO_FORMAT_H264;
         this.attachedGamepadMask = 0;
     }
     
@@ -221,16 +220,16 @@ public class StreamConfiguration {
         return audioConfiguration;
     }
     
-    public boolean getHevcSupported() {
-        return supportsHevc;
+    public int getSupportedVideoFormats() {
+        return supportedVideoFormats;
     }
 
     public int getHevcBitratePercentageMultiplier() {
         return hevcBitratePercentageMultiplier;
     }
 
-    public boolean getEnableHdr() {
-        return enableHdr;
+    public int getAv1BitratePercentageMultiplier() {
+        return av1BitratePercentageMultiplier;
     }
 
     public int getAttachedGamepadMask() {

@@ -123,11 +123,24 @@ public class StreamSettings extends Activity {
 
     public static class SettingsFragment extends PreferenceFragment {
         private int nativeResolutionStartIndex = Integer.MAX_VALUE;
+        private boolean nativeFramerateShown = false;
 
         private void setValue(String preferenceKey, String value) {
             ListPreference pref = (ListPreference) findPreference(preferenceKey);
 
             pref.setValue(value);
+        }
+
+        private void appendPreferenceEntry(ListPreference pref, String newEntryName, String newEntryValue) {
+            CharSequence[] newEntries = Arrays.copyOf(pref.getEntries(), pref.getEntries().length + 1);
+            CharSequence[] newValues = Arrays.copyOf(pref.getEntryValues(), pref.getEntryValues().length + 1);
+
+            // Add the new option
+            newEntries[newEntries.length - 1] = newEntryName;
+            newValues[newValues.length - 1] = newEntryValue;
+
+            pref.setEntries(newEntries);
+            pref.setEntryValues(newValues);
         }
 
         private void addNativeResolutionEntry(int nativeWidth, int nativeHeight, boolean insetsRemoved, boolean portrait) {
@@ -137,47 +150,34 @@ public class StreamSettings extends Activity {
 
             if (insetsRemoved) {
                 newName = getResources().getString(R.string.resolution_prefix_native_fullscreen);
-            }
-            else {
+            } else {
                 newName = getResources().getString(R.string.resolution_prefix_native);
             }
 
             if (PreferenceConfiguration.isSquarishScreen(nativeWidth, nativeHeight)) {
                 if (portrait) {
                     newName += " " + getResources().getString(R.string.resolution_prefix_native_portrait);
-                }
-                else {
+                } else {
                     newName += " " + getResources().getString(R.string.resolution_prefix_native_landscape);
                 }
             }
 
-            newName += " ("+nativeWidth+"x"+nativeHeight+")";
+            newName += " (" + nativeWidth + "x" + nativeHeight + ")";
 
-            String newValue = nativeWidth+"x"+nativeHeight;
-
-            CharSequence[] values = pref.getEntryValues();
+            String newValue = nativeWidth + "x" + nativeHeight;
 
             // Check if the native resolution is already present
-            for (CharSequence value : values) {
+            for (CharSequence value : pref.getEntryValues()) {
                 if (newValue.equals(value.toString())) {
                     // It is present in the default list, so don't add it again
                     return;
                 }
             }
 
-            CharSequence[] newEntries = Arrays.copyOf(pref.getEntries(), pref.getEntries().length + 1);
-            CharSequence[] newValues = Arrays.copyOf(values, values.length + 1);
-
-            // Add the new native option
-            newEntries[newEntries.length - 1] = newName;
-            newValues[newValues.length - 1] = newValue;
-
-            pref.setEntries(newEntries);
-            pref.setEntryValues(newValues);
-
-            if (newValues.length - 1 < nativeResolutionStartIndex) {
-                nativeResolutionStartIndex = newValues.length - 1;
+            if (pref.getEntryValues().length < nativeResolutionStartIndex) {
+                nativeResolutionStartIndex = pref.getEntryValues().length;
             }
+            appendPreferenceEntry(pref, newName, newValue);
         }
 
         private void addNativeResolutionEntries(int nativeWidth, int nativeHeight, boolean insetsRemoved) {
@@ -185,6 +185,25 @@ public class StreamSettings extends Activity {
                 addNativeResolutionEntry(nativeHeight, nativeWidth, insetsRemoved, true);
             }
             addNativeResolutionEntry(nativeWidth, nativeHeight, insetsRemoved, false);
+        }
+
+        private void addNativeFrameRateEntry(float framerate) {
+            ListPreference pref = (ListPreference) findPreference(PreferenceConfiguration.FPS_PREF_STRING);
+            String fpsValue = Integer.toString(Math.round(framerate));
+            String fpsName = getResources().getString(R.string.resolution_prefix_native) +
+                    " (" + fpsValue + " " + getResources().getString(R.string.fps_suffix_fps) + ")";
+
+            // Check if the native frame rate is already present
+            for (CharSequence value : pref.getEntryValues()) {
+                if (fpsValue.equals(value.toString())) {
+                    // It is present in the default list, so don't add it again
+                    nativeFramerateShown = false;
+                    return;
+                }
+            }
+
+            appendPreferenceEntry(pref, fpsName, fpsValue);
+            nativeFramerateShown = true;
         }
 
         private void removeValue(String preferenceKey, String value, Runnable onMatched) {
@@ -200,8 +219,8 @@ public class StreamSettings extends Activity {
             }
 
             // Create the new arrays
-            CharSequence[] entries = new CharSequence[pref.getEntries().length-matchingCount];
-            CharSequence[] entryValues = new CharSequence[pref.getEntryValues().length-matchingCount];
+            CharSequence[] entries = new CharSequence[pref.getEntries().length - matchingCount];
+            CharSequence[] entryValues = new CharSequence[pref.getEntryValues().length - matchingCount];
             int outIndex = 0;
             for (int i = 0; i < pref.getEntryValues().length; i++) {
                 if (pref.getEntryValues()[i].toString().equalsIgnoreCase(value)) {
@@ -267,6 +286,14 @@ public class StreamSettings extends Activity {
                 category.removePreference(findPreference("checkbox_absolute_mouse_mode"));
             }
 
+            // Hide gamepad motion sensor option when running on OSes before Android 12.
+            // Support for motion, LED, battery, and other extensions were introduced in S.
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                PreferenceCategory category =
+                        (PreferenceCategory) findPreference("category_gamepad_settings");
+                category.removePreference(findPreference("checkbox_gamepad_motion_sensors"));
+            }
+
             // Remove PiP mode on devices pre-Oreo, where the feature is not available (some low RAM devices),
             // and on Fire OS where it violates the Amazon App Store guidelines for some reason.
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
@@ -285,9 +312,9 @@ public class StreamSettings extends Activity {
             }*/
 
             // Remove the vibration options if the device can't vibrate
-            if (!((Vibrator)getActivity().getSystemService(Context.VIBRATOR_SERVICE)).hasVibrator()) {
+            if (!((Vibrator) getActivity().getSystemService(Context.VIBRATOR_SERVICE)).hasVibrator()) {
                 PreferenceCategory category =
-                        (PreferenceCategory) findPreference("category_input_settings");
+                        (PreferenceCategory) findPreference("category_gamepad_settings");
                 category.removePreference(findPreference("checkbox_vibrate_fallback"));
 
                 // The entire OSC category may have already been removed by the touchscreen check above
@@ -314,8 +341,7 @@ public class StreamSettings extends Activity {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                         // Use the much nicer Display.getCutout() API on Android 10+
                         cutout = display.getCutout();
-                    }
-                    else {
+                    } else {
                         // Android 9 only
                         cutout = displayCutoutP;
                     }
@@ -361,16 +387,14 @@ public class StreamSettings extends Activity {
 
                     if ((width >= 3840 || height >= 2160) && maxSupportedResW < 3840) {
                         maxSupportedResW = 3840;
-                    }
-                    else if ((width >= 2560 || height >= 1440) && maxSupportedResW < 2560) {
+                    } else if ((width >= 2560 || height >= 1440) && maxSupportedResW < 2560) {
                         maxSupportedResW = 2560;
-                    }
-                    else if ((width >= 1920 || height >= 1080) && maxSupportedResW < 1920) {
+                    } else if ((width >= 1920 || height >= 1080) && maxSupportedResW < 1920) {
                         maxSupportedResW = 1920;
                     }
 
                     if (candidate.getRefreshRate() > maxSupportedFps) {
-                        maxSupportedFps = (int)candidate.getRefreshRate();
+                        maxSupportedFps = (int) candidate.getRefreshRate();
                     }
                 }
 
@@ -384,17 +408,15 @@ public class StreamSettings extends Activity {
                 if (avcDecoder != null) {
                     Range<Integer> avcWidthRange = avcDecoder.getCapabilitiesForType("video/avc").getVideoCapabilities().getSupportedWidths();
 
-                    LimeLog.info("AVC supported width range: "+avcWidthRange.getLower()+" - "+avcWidthRange.getUpper());
+                    LimeLog.info("AVC supported width range: " + avcWidthRange.getLower() + " - " + avcWidthRange.getUpper());
 
                     // If 720p is not reported as supported, ignore all results from this API
                     if (avcWidthRange.contains(1280)) {
                         if (avcWidthRange.contains(3840) && maxSupportedResW < 3840) {
                             maxSupportedResW = 3840;
-                        }
-                        else if (avcWidthRange.contains(1920) && maxSupportedResW < 1920) {
+                        } else if (avcWidthRange.contains(1920) && maxSupportedResW < 1920) {
                             maxSupportedResW = 1920;
-                        }
-                        else if (maxSupportedResW < 1280) {
+                        } else if (maxSupportedResW < 1280) {
                             maxSupportedResW = 1280;
                         }
                     }
@@ -403,23 +425,21 @@ public class StreamSettings extends Activity {
                 if (hevcDecoder != null) {
                     Range<Integer> hevcWidthRange = hevcDecoder.getCapabilitiesForType("video/hevc").getVideoCapabilities().getSupportedWidths();
 
-                    LimeLog.info("HEVC supported width range: "+hevcWidthRange.getLower()+" - "+hevcWidthRange.getUpper());
+                    LimeLog.info("HEVC supported width range: " + hevcWidthRange.getLower() + " - " + hevcWidthRange.getUpper());
 
                     // If 720p is not reported as supported, ignore all results from this API
                     if (hevcWidthRange.contains(1280)) {
                         if (hevcWidthRange.contains(3840) && maxSupportedResW < 3840) {
                             maxSupportedResW = 3840;
-                        }
-                        else if (hevcWidthRange.contains(1920) && maxSupportedResW < 1920) {
+                        } else if (hevcWidthRange.contains(1920) && maxSupportedResW < 1920) {
                             maxSupportedResW = 1920;
-                        }
-                        else if (maxSupportedResW < 1280) {
+                        } else if (maxSupportedResW < 1280) {
                             maxSupportedResW = 1280;
                         }
                     }
                 }
 
-                LimeLog.info("Maximum resolution slot: "+maxSupportedResW);
+                LimeLog.info("Maximum resolution slot: " + maxSupportedResW);
 
                 if (maxSupportedResW != 0) {
                     if (maxSupportedResW < 3840) {
@@ -457,8 +477,7 @@ public class StreamSettings extends Activity {
                     }
                     // Never remove 720p
                 }
-            }
-            else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
                 // On Android 4.2 and later, we can get the true metrics via the
                 // getRealMetrics() function (unlike the lies that getWidth() and getHeight()
                 // tell to us).
@@ -467,8 +486,7 @@ public class StreamSettings extends Activity {
                 int width = Math.max(metrics.widthPixels, metrics.heightPixels);
                 int height = Math.min(metrics.widthPixels, metrics.heightPixels);
                 addNativeResolutionEntries(width, height, false);
-            }
-            else {
+            } else {
                 // On Android 4.1, we have to resort to reflection to invoke hidden APIs
                 // to get the real screen dimensions.
                 Display display = getActivity().getWindowManager().getDefaultDisplay();
@@ -508,6 +526,7 @@ public class StreamSettings extends Activity {
                 }
                 // Never remove 30 FPS or 60 FPS
             }
+            addNativeFrameRateEntry(maxSupportedFps);
 
             // Android L introduces proper 7.1 surround sound support. Remove the 7.1 option
             // for earlier versions of Android to prevent AudioTrack initialization issues.
@@ -528,8 +547,7 @@ public class StreamSettings extends Activity {
                 PreferenceCategory category =
                         (PreferenceCategory) findPreference("category_advanced_settings");
                 category.removePreference(findPreference("checkbox_unlock_fps"));
-            }
-            else {
+            } else {
                 findPreference(PreferenceConfiguration.UNLOCK_FPS_STRING).setOnPreferenceChangeListener(new Preference.OnPreferenceChangeListener() {
                     @Override
                     public boolean onPreferenceChange(Preference preference, Object newValue) {
@@ -540,7 +558,7 @@ public class StreamSettings extends Activity {
                             @Override
                             public void run() {
                                 // Ensure the activity is still open when this timeout expires
-                                StreamSettings settingsActivity = (StreamSettings)SettingsFragment.this.getActivity();
+                                StreamSettings settingsActivity = (StreamSettings) SettingsFragment.this.getActivity();
                                 if (settingsActivity != null) {
                                     settingsActivity.reloadSettings();
                                 }
@@ -559,8 +577,7 @@ public class StreamSettings extends Activity {
                 PreferenceCategory category =
                         (PreferenceCategory) findPreference("category_advanced_settings");
                 category.removePreference(findPreference("checkbox_enable_hdr"));
-            }
-            else {
+            } else {
                 Display display = getActivity().getWindowManager().getDefaultDisplay();
                 Display.HdrCapabilities hdrCaps = display.getHdrCapabilities();
 
@@ -580,8 +597,7 @@ public class StreamSettings extends Activity {
                     PreferenceCategory category =
                             (PreferenceCategory) findPreference("category_advanced_settings");
                     category.removePreference(findPreference("checkbox_enable_hdr"));
-                }
-                else if (PreferenceConfiguration.isShieldAtvFirmwareWithBrokenHdr()) {
+                } else if (PreferenceConfiguration.isShieldAtvFirmwareWithBrokenHdr()) {
                     LimeLog.info("Disabling HDR toggle on old broken SHIELD TV firmware");
                     PreferenceCategory category =
                             (PreferenceCategory) findPreference("category_advanced_settings");
@@ -601,7 +617,7 @@ public class StreamSettings extends Activity {
                     String valueStr = (String) newValue;
 
                     // Detect if this value is the native resolution option
-                    CharSequence[] values = ((ListPreference)preference).getEntryValues();
+                    CharSequence[] values = ((ListPreference) preference).getEntryValues();
                     boolean isNativeRes = true;
                     for (int i = 0; i < values.length; i++) {
                         // Look for a match prior to the start of the native resolution entries
@@ -631,6 +647,15 @@ public class StreamSettings extends Activity {
                 public boolean onPreferenceChange(Preference preference, Object newValue) {
                     SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(SettingsFragment.this.getActivity());
                     String valueStr = (String) newValue;
+
+                    // If this is native frame rate, show the warning dialog
+                    CharSequence[] values = ((ListPreference) preference).getEntryValues();
+                    if (nativeFramerateShown && values[values.length - 1].toString().equals(newValue.toString())) {
+                        Dialog.displayDialog(getActivity(),
+                                getResources().getString(R.string.title_native_fps_dialog),
+                                getResources().getString(R.string.text_native_res_dialog),
+                                false);
+                    }
 
                     // Write the new bitrate value
                     resetBitrateToDefault(prefs, null, valueStr);
