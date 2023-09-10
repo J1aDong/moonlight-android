@@ -245,7 +245,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 adjustedValues[2] = gyroData[2];
                 break;
             case Surface.ROTATION_90: // 左横屏
-                adjustedValues[0] = gyroData[1];
+                adjustedValues[0] = -gyroData[1];
                 adjustedValues[1] = -gyroData[0];
                 adjustedValues[2] = gyroData[2];
                 break;
@@ -255,7 +255,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 adjustedValues[2] = gyroData[2];
                 break;
             case Surface.ROTATION_270: // 右横屏
-                adjustedValues[0] = -gyroData[1];
+                adjustedValues[0] = gyroData[1];
                 adjustedValues[1] = gyroData[0];
                 adjustedValues[2] = gyroData[2];
                 break;
