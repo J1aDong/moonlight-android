@@ -190,8 +190,8 @@
     <string name="title_seekbar_deadzone">Adjust analog stick deadzone</string>
     <string name="summary_seekbar_deadzone">Note: Some games can enforce a larger deadzone than what Moonlight is configured to use.</string>
     <string name="suffix_seekbar_deadzone">%</string>
-    <string name="title_gyro_sensitivity">Adjust gyro assist sensitivity</string>
-    <string name="summary_gyro_sensitivity">请在sunshine中开启ps4协议</string>
+    <string name="title_gyro_ps4">Adjust gyro assist sensitivity</string>
+    <string name="summary_gyro_ps4">请在sunshine中开启ps4协议</string>
     <string name="suffix_gyro_sensitivity">%</string>
     <string name="title_checkbox_xb1_driver">Xbox 360/One USB gamepad driver</string>
     <string name="summary_checkbox_xb1_driver">Enables a built-in USB driver for devices without native Xbox controller support</string>
@@ -301,4 +301,6 @@
     <string name="pacing_balanced">Balanced</string>
     <string name="pacing_balanced_alt">Balanced with FPS limit</string>
     <string name="pacing_smoothness">Prefer smoothest video (may significantly increase latency)</string>
+    <string name="summary_gyro_mouse_sensity">陀螺仪模拟鼠标，不要与“模拟ps4陀螺仪”同时开启（0为不开启）</string>
+    <string name="title_gyro_mouse">手机陀螺仪模拟鼠标</string>
 </resources>

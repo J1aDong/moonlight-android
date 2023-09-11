@@ -65,11 +65,18 @@
             android:text="@string/suffix_seekbar_deadzone"
             android:title="@string/title_seekbar_deadzone"/>
         <CheckBoxPreference
-            android:key="gyro_sensitivity"
-            android:summary="@string/summary_gyro_sensitivity"
+            android:key="gyro_ps4_enable"
+            android:summary="@string/summary_gyro_ps4"
             android:defaultValue="false"
             android:text="@string/suffix_gyro_sensitivity"
-            android:title="@string/title_gyro_sensitivity"/>
+            android:title="@string/title_gyro_ps4"/>
+        <com.limelight.preferences.SeekBarPreference
+            android:key="gyro_mouse_sensitivity"
+            android:defaultValue="0"
+            android:max="100"
+            android:min="0"
+            android:summary="@string/summary_gyro_mouse_sensity"
+            android:title="@string/title_gyro_mouse"/>
         <CheckBoxPreference
             android:key="checkbox_multi_controller"
             android:title="@string/title_checkbox_multi_controller"

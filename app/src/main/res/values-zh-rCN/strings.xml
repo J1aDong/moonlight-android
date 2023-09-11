@@ -262,7 +262,7 @@
     <string name="pair_pairing_help">如果你的主机运行的是 Sunshine，那请前往Sunshine的网页界面输入PIN码。</string>
     <string name="pcview_menu_eol">NVIDIA GameStream 终止服务</string>
 
-    <string name="title_gyro_sensitivity">手机陀螺仪模拟ps4陀螺仪</string>
+    <string name="title_gyro_ps4">手机陀螺仪模拟ps4陀螺仪</string>
 
     <string name="game_menu_toggle_keyboard">切换屏幕键盘</string>
     <string name="game_menu_toggle_mouse_on">启用控制器鼠标仿真</string>
@@ -277,4 +277,6 @@
     <string name="game_menu_send_keys_win_d">发送 WIN + D (切换到 桌面)</string>
     <string name="game_menu_send_keys_win_g">发送 WIN + G (打开 Xbox Game Bar)</string>
     <string name="game_menu_send_keys_shift_tab">发送 SHIFT + TAB (打开 Steam Overlay)</string>
+    <string name="summary_gyro_mouse_sensity">陀螺仪模拟鼠标，不要与“模拟ps4陀螺仪”同时开启（0为不开启）</string>
+    <string name="title_gyro_mouse">手机陀螺仪模拟鼠标(推荐20左右)</string>
 </resources>
